@@ -16,7 +16,7 @@ Professionals: 480 fields (30*16), 99 mines or 170 mines
     let texture = new Image()
     texture.src = "./resources/spritesheet.png"
 
-    const zoom = 0.5
+    const zoom = 2
 
     const mines = 10
 
