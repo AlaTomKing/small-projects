@@ -10,15 +10,15 @@ Professionals: 480 fields (30*16), 99 mines or 170 mines
     const canvas = document.querySelector("#game")
     const ctx = canvas.getContext("2d")
 
-    const gridWidth = 9
-    const gridHeight = 9
+    const gridWidth = 16
+    const gridHeight = 16
 
     let texture = new Image()
-    texture.src = "./resources/spritesheet.png"
+    texture.src = "./resources/spritesheet_dark.png"
 
     const zoom = 2
 
-    const mines = 10
+    const mines = 40
 
     if (mines >= gridHeight * gridWidth) {
         console.error("Number of mines can not be larger than cell size")
@@ -27,12 +27,18 @@ Professionals: 480 fields (30*16), 99 mines or 170 mines
 
     let minePosition = new Array(gridWidth * gridHeight)
     let detectorPosition = new Array(gridWidth * gridHeight)
-    let coveredPosition = Array(gridWidth * gridHeight).fill(true)
-    let flagPosition = Array(gridWidth * gridHeight).fill(false)
+    let coveredPosition = new Array(gridWidth * gridHeight).fill(true)
+    let flagPosition = new Array(gridWidth * gridHeight).fill(false)
+    let neighboursBlankPosition = new Array(gridWidth * gridHeight).fill(false)
 
     let mouseX, mouseY
     let gridX, gridY
-    let mouseDown, mouse1Down = false
+    let detectX, detectY
+    let mouseDown, mouse1Down, detectorDown = false
+
+    let win = false
+    let lessAnnoying = true // skips having to find a clear area
+    let wrapfield = false // edge grids detecing mines can detect opposite sides
 
     let firstTry = false
     let clearedGrids = []
@@ -40,7 +46,34 @@ Professionals: 480 fields (30*16), 99 mines or 170 mines
 
     let lostPotision
 
-    const floodFill = (x, y) => {
+    const mod = (x, y) => (((x % y) + y) % y)
+    const con1Dto2D = (x) => [x % gridWidth, Math.floor(x / gridWidth)]
+    const con2Dto1D = (x, y) => x + y * gridWidth
+    let con2Dto1D_check
+    let getMineGrid
+    let floodFill
+    
+    if (wrapfield) {
+        con2Dto1D_check = (x, y) => (mod(x, gridWidth) + mod(y, gridHeight) * gridWidth)
+        getMineGrid = (x, y) => minePosition[con2Dto1D(mod(x, gridWidth), mod(y, gridHeight))]
+        floodFill = (x, y) => {
+            if (coveredPosition[con2Dto1D(x, y)] && !detectorPosition[con2Dto1D(x, y)] && !minePosition[con2Dto1D(x, y)]) {
+                coveredPosition[con2Dto1D(x, y)] = false
+                floodFill(mod(x, gridWidth), mod(y + 1, gridHeight))
+                floodFill(mod(x, gridWidth), mod(y - 1, gridHeight))
+                floodFill(mod(x + 1, gridWidth), mod(y, gridHeight))
+                floodFill(mod(x - 1, gridWidth), mod(y, gridHeight))
+                floodFill(mod(x - 1, gridWidth), mod(y - 1, gridHeight))
+                floodFill(mod(x + 1, gridWidth), mod(y - 1, gridHeight))
+                floodFill(mod(x - 1, gridWidth), mod(y + 1, gridHeight))
+                floodFill(mod(x + 1, gridWidth), mod(y + 1, gridHeight))
+                clearedGrids.push(con2Dto1D(x, y))
+            }
+    }
+    } else {
+        con2Dto1D_check = (x, y) => (x >= 0 && x < gridWidth) && (y >= 0 && y < gridHeight) ? (x + y * gridWidth) : -1
+        getMineGrid = (x, y) => (x >= 0 && x < gridWidth) && (y >= 0 && y < gridHeight) && minePosition[con2Dto1D(x, y)]
+        floodFill = (x, y) => {
         if ((x >= 0 && x < gridWidth) && (y >= 0 && y < gridHeight)) {
             if (coveredPosition[con2Dto1D(x, y)] && !detectorPosition[con2Dto1D(x, y)] && !minePosition[con2Dto1D(x, y)]) {
                 coveredPosition[con2Dto1D(x, y)] = false
@@ -48,15 +81,15 @@ Professionals: 480 fields (30*16), 99 mines or 170 mines
                 floodFill(x, y - 1)
                 floodFill(x + 1, y)
                 floodFill(x - 1, y)
+                floodFill(x - 1, y - 1)
+                floodFill(x + 1, y - 1)
+                floodFill(x - 1, y + 1)
+                floodFill(x + 1, y + 1)
                 clearedGrids.push(con2Dto1D(x, y))
             }
         }
     }
-
-    const con1Dto2D = (x) => [x % gridWidth, Math.floor(x / gridWidth)]
-    const con2Dto1D = (x, y) => x + y * gridWidth
-    const con2Dto1D_check = (x, y) => (x >= 0 && x < gridWidth) && (y >= 0 && y < gridHeight) ? (x + y * gridWidth) : -1
-    const getMineGrid = (x, y) => (x >= 0 && x < gridWidth) && (y >= 0 && y < gridHeight) && minePosition[con2Dto1D(x, y)]
+    }
 
     const clearGrid = (x, y) => {
         if ((x >= 0 && x < gridWidth) && (y >= 0 && x < gridHeight)) {
@@ -100,6 +133,25 @@ Professionals: 480 fields (30*16), 99 mines or 170 mines
         arrClearPush(con2Dto1D_check(x + 1, y + 1)) // rightBottomGrid
     }
 
+    const reset = () => {
+        win = false
+        firstTry = false
+        lostPotision = null
+
+        minePosition = new Array(gridWidth * gridHeight)
+        detectorPosition = new Array(gridWidth * gridHeight)
+        coveredPosition = new Array(gridWidth * gridHeight).fill(true)
+        flagPosition = new Array(gridWidth * gridHeight).fill(false)
+        neighboursBlankPosition = new Array(gridWidth * gridHeight).fill(false)
+
+        clearedGrids = []
+        neighboursToClear = []
+
+        detectorDown = false
+
+        render()
+    }
+
     /*{
         floodFill(0, 0)
 
@@ -124,6 +176,8 @@ Professionals: 480 fields (30*16), 99 mines or 170 mines
     //console.log(minePosition)
 
     const render = () => {
+        if (win) return
+
         for (let x = 0; x < gridWidth; x++) {
             for (let y = 0; y < gridHeight; y++) {
                 //ctx.globalAlpha = 1
@@ -131,8 +185,10 @@ Professionals: 480 fields (30*16), 99 mines or 170 mines
                     ctx.drawImage(texture, 64, 0, 16, 16, 16 * x * zoom, 16 * y * zoom, 16 * zoom, 16 * zoom)
                 } else if (flagPosition[con2Dto1D(x, y)]) {
                     ctx.drawImage(texture, 16, 0, 16, 16, 16 * x * zoom, 16 * y * zoom, 16 * zoom, 16 * zoom)
+                } else if (neighboursBlankPosition[con2Dto1D(x, y)]) {
+                    ctx.drawImage(texture, 32, 0, 16, 16, 16 * x * zoom, 16 * y * zoom, 16 * zoom, 16 * zoom)
                 } else if (coveredPosition[con2Dto1D(x, y)]) {
-                    if (mouse1Down && x == gridX && y == gridY) {
+                    if (mouse1Down && !detectorDown && x == gridX && y == gridY) {
                         ctx.drawImage(texture, 32, 0, 16, 16, 16 * x * zoom, 16 * y * zoom, 16 * zoom, 16 * zoom)
                     } else {
                         ctx.drawImage(texture, 0, 0, 16, 16, 16 * x * zoom, 16 * y * zoom, 16 * zoom, 16 * zoom)
@@ -158,7 +214,7 @@ Professionals: 480 fields (30*16), 99 mines or 170 mines
 
         gridX = Math.floor(mouseX / (16 * zoom))
         gridY = Math.floor(mouseY / (16 * zoom))
-        
+
         //console.log(mouseX, mouseY)
 
         /*if (ctx && (currentMouseGridPosX != xx || currentMouseGridPosY != yy)) {
@@ -169,50 +225,73 @@ Professionals: 480 fields (30*16), 99 mines or 170 mines
         render()
     }
 
+    const checkWin = () => {
+        let cleared = 0
+        let minesCovered = 0
+        coveredPosition.forEach((val, idx) => {
+            if (val && minePosition[idx]) minesCovered++
+            else if (!val) cleared++
+        })
+
+        if ((gridWidth*gridHeight)-cleared == mines && minesCovered == mines) {
+            minePosition.forEach((val, idx) => {
+                if (val) flagPosition[idx] = true
+            })
+            render()
+            win = true
+        }
+    }
+
     const detectMouse = (mouse, click) => {
+        if (win) return
+
+        trackMouse(mouse)
+
         if (lostPotision) {
             return
         }
-        
-        console.log(mouse)
-        
+
         if (mouse.button == 0) {
             mouse1Down = click
         }
 
         mouseDown = click
-        
+
         //console.log("current mouse pos: ", gridX, gridY)
 
         // LEFT CLICK
-        if (!mouse1Down && mouse.button == 0 && (gridX >= 0 && gridX < gridWidth) && (gridY >= 0 && gridY < gridHeight) && !flagPosition[con2Dto1D(gridX, gridY)]) {
+        if (!mouse1Down && !detectorDown && mouse.button === 0 && (gridX >= 0 && gridX < gridWidth) && (gridY >= 0 && gridY < gridHeight) && !flagPosition[con2Dto1D(gridX, gridY)]) {
             if (!firstTry) {
                 firstTry = true
 
-                let idx = mines
-                while (idx > 0) {
-                    const pos = Math.floor(Math.random() * (gridWidth * gridHeight) - 1)
-                    if (!minePosition[pos] && con2Dto1D(gridX, gridY) != pos) {
-                        minePosition[pos] = true
-                        idx--
-                    }
-                }
+                do {
+                    minePosition = []
+                    detectorPosition = []
 
-                for (let x = 0; x < gridWidth; x++) {
-                    for (let y = 0; y < gridHeight; y++) {
-                        detectorPosition[con2Dto1D(x, y)] = checkNeighbours(x, y)
+                    let idx = mines
+                    while (idx > 0) {
+                        const pos = Math.floor(Math.random() * (gridWidth * gridHeight) - 1)
+                        if (!minePosition[pos] && con2Dto1D(gridX, gridY) != pos) {
+                            minePosition[pos] = true
+                            idx--
+                        }
                     }
-                }
+
+                    for (let x = 0; x < gridWidth; x++) {
+                        for (let y = 0; y < gridHeight; y++) {
+                            detectorPosition[con2Dto1D(x, y)] = checkNeighbours(x, y)
+                        }
+                    }
+                } while (lessAnnoying && detectorPosition[con2Dto1D(gridX, gridY)])
             }
 
             if (minePosition[con2Dto1D(gridX, gridY)]) {
                 lostPotision = con2Dto1D(gridX, gridY)
-                
-                for (let x = 0; x < gridWidth; x++) {
-                    for (let y = 0; y < gridHeight; y++) {
-                        coveredPosition[con2Dto1D(x, y)] = false
-                    }
-                }
+
+                for (let x = 0; x < gridWidth; x++)
+                    for (let y = 0; y < gridHeight; y++)
+                        if (minePosition[con2Dto1D(x, y)])
+                            coveredPosition[con2Dto1D(x, y)] = false
             } else if (detectorPosition[con2Dto1D(gridX, gridY)]) {
                 coveredPosition[con2Dto1D(gridX, gridY)] = false
             } else if (coveredPosition[con2Dto1D(gridX, gridY)]) {
@@ -232,8 +311,78 @@ Professionals: 480 fields (30*16), 99 mines or 170 mines
         }
 
         // RIGHT CLICK
-        if (!mouseDown && mouse.button == 2 && (gridX >= 0 && gridX < gridWidth) && (gridY >= 0 && gridY < gridHeight) && coveredPosition[con2Dto1D(gridX, gridY)]) {
+        if (!mouseDown && mouse.button === 2 && (gridX >= 0 && gridX < gridWidth) && (gridY >= 0 && gridY < gridHeight) && coveredPosition[con2Dto1D(gridX, gridY)]) {
             flagPosition[con2Dto1D(gridX, gridY)] = !flagPosition[con2Dto1D(gridX, gridY)]
+        }
+
+        if (mouse1Down && detectorPosition[con2Dto1D(gridX, gridY)] && !coveredPosition[con2Dto1D(gridX, gridY)]) {
+            detectorDown = true
+
+            detectX = gridX
+            detectY = gridY
+
+            const idx1 = con2Dto1D_check(gridX - 1, gridY)
+            const idx2 = con2Dto1D_check(gridX + 1, gridY)
+            const idx3 = con2Dto1D_check(gridX, gridY - 1)
+            const idx4 = con2Dto1D_check(gridX, gridY + 1)
+            const idx5 = con2Dto1D_check(gridX - 1, gridY - 1)
+            const idx6 = con2Dto1D_check(gridX + 1, gridY - 1)
+            const idx7 = con2Dto1D_check(gridX - 1, gridY + 1)
+            const idx8 = con2Dto1D_check(gridX + 1, gridY + 1)
+
+            if (idx1 != -1 && coveredPosition[idx1]) neighboursBlankPosition[idx1] = true
+            if (idx2 != -1 && coveredPosition[idx2]) neighboursBlankPosition[idx2] = true
+            if (idx3 != -1 && coveredPosition[idx3]) neighboursBlankPosition[idx3] = true
+            if (idx4 != -1 && coveredPosition[idx4]) neighboursBlankPosition[idx4] = true
+            if (idx5 != -1 && coveredPosition[idx5]) neighboursBlankPosition[idx5] = true
+            if (idx6 != -1 && coveredPosition[idx6]) neighboursBlankPosition[idx6] = true
+            if (idx7 != -1 && coveredPosition[idx7]) neighboursBlankPosition[idx7] = true
+            if (idx8 != -1 && coveredPosition[idx8]) neighboursBlankPosition[idx8] = true
+        } else {
+            detectorDown = false
+
+            let flagCounter = 0
+
+            neighboursBlankPosition.forEach((val, idx) => {
+                if (val && flagPosition[idx]) flagCounter++
+            })
+
+            if (gridX == detectX && gridY == detectY && flagCounter == detectorPosition[con2Dto1D(detectX, detectY)]) {
+                let iter = true
+                neighboursBlankPosition.forEach((val, idx) => {
+                    if (val && iter) {
+                        if (!flagPosition[idx] && minePosition[idx]) {
+                            lostPotision = idx
+                            iter = false
+
+                            for (let x = 0; x < gridWidth; x++)
+                                for (let y = 0; y < gridHeight; y++)
+                                    if (minePosition[con2Dto1D(x, y)])
+                                        coveredPosition[con2Dto1D(x, y)] = false
+                        } else if (detectorPosition[idx]) {
+                            coveredPosition[idx] = false
+                        } else if (coveredPosition[idx]) {
+                            const co = con1Dto2D(idx)
+                            floodFill(co[0], co[1])
+
+                            clearedGrids.forEach((pos) => {
+                                clearNeighbours(pos)
+                            })
+
+                            neighboursToClear.forEach((idx) => {
+                                coveredPosition[idx] = false
+                            })
+
+                            neighboursToClear = []
+                            clearedGrids = []
+                        }
+                    }
+                })
+            }
+
+            neighboursBlankPosition = []
+
+            checkWin()
         }
 
         render()
@@ -244,4 +393,8 @@ Professionals: 480 fields (30*16), 99 mines or 170 mines
     window.addEventListener('mousemove', (mouse) => trackMouse(mouse))
     window.addEventListener('mousedown', (mouse) => detectMouse(mouse, true))
     window.addEventListener('mouseup', (mouse) => detectMouse(mouse, false))
+
+    window.addEventListener('keydown', (e) => {if (e.key == "r") reset()})
+
+    canvas.addEventListener('contextmenu', (e) => { e.preventDefault() })
 })()
